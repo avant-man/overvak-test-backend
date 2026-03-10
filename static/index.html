@@ -96,10 +96,16 @@
     }
 
     function renderResults(data) {
-      const { video_id, predictions, scores, metrics, processing_time_seconds } = data;
+      const { video_id, predictions, scores, metrics, processing_time_seconds, detected_at } = data;
       const gt = metrics?.ground_truth ?? null;
       const container = $("results");
       container.innerHTML = "";
+
+      const detectedLabel = detected_at
+        ? new Date(detected_at).toLocaleString(undefined, {
+            dateStyle: "medium", timeStyle: "medium"
+          })
+        : null;
 
       // Meta bar
       const meta = document.createElement("div");
@@ -107,6 +113,7 @@
       meta.innerHTML = `
         <span>🎬 <span class="text-gray-200 font-semibold">${video_id}</span></span>
         <span>⏱ ${processing_time_seconds}s</span>
+        ${detectedLabel ? `<span>🕐 Detected at <span class="text-gray-200 font-semibold">${detectedLabel}</span></span>` : ""}
       `;
       container.appendChild(meta);
 

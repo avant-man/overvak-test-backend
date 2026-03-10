@@ -1,4 +1,10 @@
 import os
+
+# Ensure Deno (EJS/JS challenge solver) is on PATH for yt-dlp YouTube
+_deno_bin = os.path.join(os.path.expanduser("~"), ".deno", "bin")
+if os.path.isdir(_deno_bin):
+    os.environ["PATH"] = _deno_bin + os.pathsep + os.environ.get("PATH", "")
+
 import json
 import cv2
 import torch
@@ -102,14 +108,14 @@ def _make_netscape_cookies(json_path: str, out_path: str) -> None:
 
 
 def download_video(url: str, out_dir: str) -> str:
-    # Use single-file formats only so ffmpeg is not required for merging
+    # android_vr + default avoid PO token; ejs:github + Deno on PATH solve JS challenges
     ydl_opts = {
         "format": "best[height<=480]/best",
         "outtmpl": os.path.join(out_dir, "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
-        # android client uses YouTube's native API path — no PO token or JS challenge needed
-        "extractor_args": {"youtube": {"player_client": ["android", "web", "tv_embedded"]}},
+        "remote_components": ["ejs:github"],
+        "extractor_args": {"youtube": {"player_client": ["android_vr", "default"]}},
     }
     if os.path.exists(_COOKIES_JSON):
         netscape_cookies = os.path.join(out_dir, "cookies.txt")

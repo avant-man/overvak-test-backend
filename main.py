@@ -4,6 +4,12 @@ import subprocess
 import time
 import traceback
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+
+# Ensure Deno (EJS/JS challenge solver) is on PATH for yt-dlp YouTube
+_deno_bin = os.path.join(os.path.expanduser("~"), ".deno", "bin")
+if os.path.isdir(_deno_bin):
+    os.environ["PATH"] = _deno_bin + os.pathsep + os.environ.get("PATH", "")
 
 import yt_dlp
 from fastapi import FastAPI, HTTPException
@@ -52,14 +58,9 @@ def _ensure_video_and_audio(url: str, video_path: str, audio_path: str) -> None:
             "outtmpl": os.path.join(downloads_dir, "%(id)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
-            "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
-            "js_runtimes": {"node": {}},
-            "http_headers": {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
+            "remote_components": ["ejs:github"],
+            "extractor_args": {
+                "youtube": {"player_client": ["android_vr", "default"]},
             },
         }
         if os.path.exists(_COOKIES_JSON):
@@ -139,6 +140,7 @@ class AnalyzeResponse(BaseModel):
     scores: dict[str, float]
     metrics: dict | None
     processing_time_seconds: float
+    detected_at: str
 
 
 @app.get("/health")
@@ -184,6 +186,7 @@ def analyze(req: AnalyzeRequest):
         video_scores, _ = classify_video(video_path)
         audio_scores, _ = classify_audio(audio_path)
         fused_scores, predictions = fuse(video_scores, audio_scores)
+        detected_at = datetime.now(timezone.utc).isoformat()
         metrics = compute_metrics(video_id, predictions)
 
         elapsed = round(time.perf_counter() - t0, 2)
@@ -199,4 +202,5 @@ def analyze(req: AnalyzeRequest):
         scores=fused_scores,
         metrics=metrics,
         processing_time_seconds=elapsed,
+        detected_at=detected_at,
     )
