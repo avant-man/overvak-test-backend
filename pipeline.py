@@ -108,8 +108,8 @@ def download_video(url: str, out_dir: str) -> str:
         "outtmpl": os.path.join(out_dir, "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
-        # ios client bypasses the JS n-signature challenge that blocks web/tv clients
-        "extractor_args": {"youtube": {"player_client": ["ios", "mweb"]}},
+        # android client uses YouTube's native API path — no PO token or JS challenge needed
+        "extractor_args": {"youtube": {"player_client": ["android", "web", "tv_embedded"]}},
     }
     if os.path.exists(_COOKIES_JSON):
         netscape_cookies = os.path.join(out_dir, "cookies.txt")
