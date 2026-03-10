@@ -47,7 +47,8 @@ def _get_text_embeddings() -> dict[str, torch.Tensor]:
     inputs = _processor(text=prompts, return_tensors="pt", padding=True)
     inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
     with torch.no_grad():
-        text_emb = _model.get_text_features(**inputs).text_embeds  # (8, d)
+        out = _model.get_text_features(**inputs)
+        text_emb = out if isinstance(out, torch.Tensor) else out.pooler_output  # (8, d)
         text_emb = F.normalize(text_emb, dim=-1)
     return {cls: text_emb[i] for i, cls in enumerate(CLASSES)}
 
@@ -116,7 +117,8 @@ def classify_audio(wav_path: str) -> tuple[dict[str, float], dict[str, int]]:
             )
             audio_inputs = {k: v.to(DEVICE) for k, v in audio_inputs.items()}
             with torch.no_grad():
-                audio_emb = _model.get_audio_features(**audio_inputs).audio_embeds  # (1, d)
+                out = _model.get_audio_features(**audio_inputs)
+                audio_emb = out if isinstance(out, torch.Tensor) else out.pooler_output  # (1, d)
                 audio_emb = F.normalize(audio_emb, dim=-1).squeeze(0)  # (d,)
 
             for cls in CLASSES:
