@@ -52,14 +52,11 @@ def _ensure_video_and_audio(url: str, video_path: str, audio_path: str) -> None:
             "outtmpl": os.path.join(downloads_dir, "%(id)s.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
-            "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
-            "js_runtimes": {"node": {}},
-            "http_headers": {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["mweb", "tv", "tv_simply", "web_safari"],
+                    "getpot_bgutil_script": "/opt/bgutil-provider/server/build/generate_once.js",
+                }
             },
         }
         if os.path.exists(_COOKIES_JSON):
