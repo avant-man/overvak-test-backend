@@ -2,12 +2,14 @@ import os
 import json
 import cv2
 import torch
-import tempfile
 import yt_dlp
 from PIL import Image
 from transformers import AutoTokenizer, AutoModel
 import torchvision.transforms as T
 from ground_truth import ACTIONS, get_ground_truth
+
+VIDEO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "video_cache")
+os.makedirs(VIDEO_CACHE_DIR, exist_ok=True)
 
 MODEL_ID = "microsoft/xclip-base-patch32"
 CLIP_LEN = 8       # frames per clip
@@ -101,39 +103,60 @@ def _make_netscape_cookies(json_path: str, out_path: str) -> None:
             f.write(f"{domain}\t{include_subdomains}\t{path}\t{secure}\t{exp_ts}\t{name}\t{value}\n")
 
 
+def _resolve_filename(fname: str) -> str:
+    if os.path.exists(fname):
+        return fname
+    base = os.path.splitext(fname)[0]
+    for ext in ("mp4", "webm", "mkv", "m4v"):
+        candidate = f"{base}.{ext}"
+        if os.path.exists(candidate):
+            return candidate
+    raise FileNotFoundError(f"downloaded file not found near: {fname}")
+
+
+def _find_cached_video(video_id: str) -> str | None:
+    """Return the path to a cached video file for video_id, or None if not present."""
+    for ext in ("mp4", "webm", "mkv", "m4v"):
+        candidate = os.path.join(VIDEO_CACHE_DIR, f"{video_id}.{ext}")
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def download_video(url: str, out_dir: str) -> str:
-    # Use single-file formats only so ffmpeg is not required for merging
-    ydl_opts = {
+    base_opts = {
         "format": "best[height<=480]/best",
         "outtmpl": os.path.join(out_dir, "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["ios", "android", "web"]}},
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-        },
     }
+
     if os.path.exists(_COOKIES_JSON):
         netscape_cookies = os.path.join(out_dir, "cookies.txt")
         _make_netscape_cookies(_COOKIES_JSON, netscape_cookies)
-        ydl_opts["cookiefile"] = netscape_cookies
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        fname = ydl.prepare_filename(info)
+        base_opts["cookiefile"] = netscape_cookies
 
-    if not os.path.exists(fname):
-        # yt-dlp sometimes remuxes to a different container, try common ones
-        base = os.path.splitext(fname)[0]
-        for ext in ("mp4", "webm", "mkv"):
-            candidate = f"{base}.{ext}"
-            if os.path.exists(candidate):
-                return candidate
-        raise FileNotFoundError(f"downloaded file not found near: {fname}")
-    return fname
+    # Try clients in order of reliability for server/datacenter IPs.
+    # ios/android avoid PO-token requirements; web needs cookies+PO-token.
+    client_strategies = [
+        {"extractor_args": {"youtube": {"player_client": ["ios"]}}},
+        {"extractor_args": {"youtube": {"player_client": ["android"]}}},
+        {"extractor_args": {"youtube": {"player_client": ["mweb"]}}},
+        {"extractor_args": {"youtube": {"player_client": ["web"]}}},
+    ]
+
+    last_err: Exception = RuntimeError("no strategies tried")
+    for strategy in client_strategies:
+        opts = {**base_opts, **strategy}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return _resolve_filename(ydl.prepare_filename(info))
+        except Exception as exc:
+            last_err = exc
+            continue
+
+    raise last_err
 
 
 def extract_clips(video_path: str) -> list[torch.Tensor]:
@@ -200,22 +223,29 @@ def compute_metrics(predictions: dict[str, int], ground_truth: dict[str, int]) -
 
 
 def run_pipeline(url: str, video_id: str) -> dict:
-    with tempfile.TemporaryDirectory() as tmp:
-        video_path = download_video(url, tmp)
-        clips = extract_clips(video_path)
-        vote_ratios = classify_clips(clips)
-        predictions = {a: int(vote_ratios[a] >= VOTE_RATIO) for a in ACTIONS}
-        detected = [a for a in ACTIONS if predictions[a] == 1]
-        gt = get_ground_truth(video_id)
-        metrics = compute_metrics(predictions, gt) if gt else None
+    cached = _find_cached_video(video_id)
+    if cached:
+        print(f"[pipeline] cache hit: {cached}")
+        video_path = cached
+    else:
+        print(f"[pipeline] downloading {video_id} …")
+        video_path = download_video(url, VIDEO_CACHE_DIR)
+        print(f"[pipeline] saved to {video_path}")
 
-        return {
-            "video_id": video_id,
-            "n_clips_sampled": len(clips),
-            "device": str(DEVICE),
-            "vote_ratios": {a: round(vote_ratios[a], 4) for a in ACTIONS},
-            "predictions": predictions,
-            "detected_actions": detected,
-            "ground_truth": gt,
-            "metrics": metrics,
-        }
+    clips = extract_clips(video_path)
+    vote_ratios = classify_clips(clips)
+    predictions = {a: int(vote_ratios[a] >= VOTE_RATIO) for a in ACTIONS}
+    detected = [a for a in ACTIONS if predictions[a] == 1]
+    gt = get_ground_truth(video_id)
+    metrics = compute_metrics(predictions, gt) if gt else None
+
+    return {
+        "video_id": video_id,
+        "n_clips_sampled": len(clips),
+        "device": str(DEVICE),
+        "vote_ratios": {a: round(vote_ratios[a], 4) for a in ACTIONS},
+        "predictions": predictions,
+        "detected_actions": detected,
+        "ground_truth": gt,
+        "metrics": metrics,
+    }
