@@ -48,11 +48,12 @@ def _ensure_video_and_audio(url: str, video_path: str, audio_path: str) -> None:
     if not os.path.exists(video_path):
         print(f"[main] video not found locally, downloading: {url}")
         ydl_opts = {
-            "format": "best[height<=480][ext=mp4]/best[ext=mp4]/best",
-            "outtmpl": video_path,
-            "quiet": False,
-            "no_warnings": False,
+            "format": "best[height<=480]/best",
+            "outtmpl": os.path.join(downloads_dir, "%(id)s.%(ext)s"),
+            "quiet": True,
+            "no_warnings": True,
             "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
+            "js_runtimes": {"node": {}},
             "http_headers": {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -67,18 +68,23 @@ def _ensure_video_and_audio(url: str, video_path: str, audio_path: str) -> None:
             ydl_opts["cookiefile"] = netscape_cookies
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=True)
+            downloaded = ydl.prepare_filename(info)
 
-        if not os.path.exists(video_path):
-            # yt-dlp may have chosen a different container — try to find it
-            base = os.path.splitext(video_path)[0]
-            for ext in ("webm", "mkv", "mp4"):
+        if not os.path.exists(downloaded):
+            # yt-dlp sometimes remuxes — try common containers
+            base = os.path.splitext(downloaded)[0]
+            for ext in ("mp4", "webm", "mkv"):
                 candidate = f"{base}.{ext}"
-                if os.path.exists(candidate) and candidate != video_path:
-                    os.rename(candidate, video_path)
+                if os.path.exists(candidate):
+                    downloaded = candidate
                     break
             else:
-                raise FileNotFoundError(f"yt-dlp finished but video not found at: {video_path}")
+                raise FileNotFoundError(f"yt-dlp finished but downloaded file not found near: {downloaded}")
+
+        # Normalise to .mp4 path expected by the rest of the pipeline
+        if downloaded != video_path:
+            os.rename(downloaded, video_path)
 
     if not os.path.exists(audio_path):
         print(f"[main] audio not found locally, extracting from video …")
