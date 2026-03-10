@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-gray-950 text-gray-100">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Overvak — Kids Activity Detection</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 0.8s linear infinite; }
+    @keyframes bar-grow { from { width: 0; } }
+    .bar-fill { animation: bar-grow 0.6s ease-out; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center px-4 py-10 font-sans">
+
+  <!-- Header -->
+  <header class="w-full max-w-2xl mb-10 flex items-center gap-3">
+    <span class="text-3xl font-black tracking-tight text-indigo-400">⬡ Overvak</span>
+    <span class="text-gray-400 text-sm mt-1">Kids Activity Detection</span>
+  </header>
+
+  <!-- Input card -->
+  <section class="w-full max-w-2xl bg-gray-900 rounded-2xl p-6 shadow-xl mb-6">
+    <label class="block text-sm font-semibold text-gray-300 mb-2" for="url-input">
+      YouTube URL
+    </label>
+    <div class="flex gap-3">
+      <input
+        id="url-input"
+        type="url"
+        placeholder="https://youtu.be/..."
+        class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+      />
+      <button
+        id="analyze-btn"
+        class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition"
+      >
+        Analyze
+      </button>
+    </div>
+  </section>
+
+  <!-- Error -->
+  <div id="error-box" class="hidden w-full max-w-2xl bg-red-900/40 border border-red-700 rounded-xl px-4 py-3 mb-4 text-red-300 text-sm flex items-center gap-2">
+    <span>⚠</span><span id="error-text"></span>
+  </div>
+
+  <!-- Spinner -->
+  <div id="loader" class="hidden flex flex-col items-center gap-3 my-8 text-gray-400 text-sm">
+    <svg class="spinner w-10 h-10 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" d="M12 2a10 10 0 0 1 10 10" />
+    </svg>
+    <p>Analyzing video — this may take 15–30s on GPU…</p>
+  </div>
+
+  <!-- Results -->
+  <div id="results" class="hidden w-full max-w-2xl space-y-5"></div>
+
+  <script>
+    const CLASSES = ["Climbing","Crying","Falling","Hitting","Jumping","Laughing","Pushing","Running"];
+    const EMOJI   = { Climbing:"🧗", Crying:"😢", Falling:"🤕", Hitting:"👊", Jumping:"🦘", Laughing:"😄", Pushing:"🫷", Running:"🏃" };
+
+    const $ = id => document.getElementById(id);
+
+    function showError(msg) {
+      $("error-text").textContent = msg;
+      $("error-box").classList.remove("hidden");
+    }
+    function hideError() { $("error-box").classList.add("hidden"); }
+
+    function setLoading(on) {
+      $("loader").classList.toggle("hidden", !on);
+      $("analyze-btn").disabled = on;
+    }
+
+    function badgeHtml(predicted, cls, metrics) {
+      if (predicted) {
+        return `<span class="inline-flex items-center gap-1 text-xs font-semibold bg-emerald-900/60 text-emerald-300 border border-emerald-600 rounded-full px-2.5 py-0.5">✅ Detected</span>`;
+      }
+      return `<span class="inline-flex items-center gap-1 text-xs font-semibold bg-gray-800 text-gray-400 border border-gray-700 rounded-full px-2.5 py-0.5">⬜ Not Detected</span>`;
+    }
+
+    function statusBadgeHtml(cls, predictions, gt) {
+      if (!gt) return "";
+      const p = predictions[cls], g = gt[cls];
+      const map = {
+        "11": ["TP", "bg-emerald-800/60 text-emerald-300 border-emerald-600"],
+        "10": ["FP", "bg-yellow-800/60 text-yellow-300 border-yellow-600"],
+        "01": ["FN", "bg-red-800/60 text-red-300 border-red-600"],
+        "00": ["TN", "bg-gray-800 text-gray-400 border-gray-700"],
+      };
+      const key = `${p}${g}`;
+      const [label, cls_] = map[key] || ["–", "bg-gray-800 text-gray-400 border-gray-700"];
+      return `<span class="inline-flex items-center text-xs font-bold border rounded-full px-2 py-0.5 ${cls_}">${label}</span>`;
+    }
+
+    function renderResults(data) {
+      const { video_id, predictions, scores, metrics, processing_time_seconds } = data;
+      const gt = metrics?.ground_truth ?? null;
+      const container = $("results");
+      container.innerHTML = "";
+
+      // Meta bar
+      const meta = document.createElement("div");
+      meta.className = "flex flex-wrap gap-4 text-sm text-gray-400 bg-gray-900 rounded-xl px-4 py-3";
+      meta.innerHTML = `
+        <span>🎬 <span class="text-gray-200 font-semibold">${video_id}</span></span>
+        <span>⏱ ${processing_time_seconds}s</span>
+      `;
+      container.appendChild(meta);
+
+      // Per-class rows
+      const section = document.createElement("div");
+      section.className = "bg-gray-900 rounded-2xl p-5 space-y-3";
+      section.innerHTML = `<h2 class="text-base font-semibold text-gray-200 mb-4">Action Scores</h2>`;
+
+      for (const cls of CLASSES) {
+        const score = scores[cls] ?? 0;
+        const pct   = Math.round(score * 100);
+        const pred  = predictions[cls] ?? 0;
+
+        const row = document.createElement("div");
+        row.className = "space-y-1";
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm font-medium text-gray-200 w-28">${EMOJI[cls]} ${cls}</span>
+            <div class="flex items-center gap-2">
+              ${badgeHtml(pred, cls, gt)}
+              ${statusBadgeHtml(cls, predictions, gt)}
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+              <div class="bar-fill h-2 rounded-full ${pred ? "bg-indigo-500" : "bg-gray-600"}"
+                   style="width:${Math.max(pct,1)}%"></div>
+            </div>
+            <span class="text-xs text-gray-400 w-9 text-right">${pct}%</span>
+          </div>
+        `;
+        section.appendChild(row);
+      }
+      container.appendChild(section);
+
+      // Metrics card
+      if (metrics) {
+        const card = document.createElement("div");
+        card.className = "bg-gray-900 rounded-2xl p-5";
+        card.innerHTML = `
+          <h2 class="text-base font-semibold text-gray-200 mb-4">Evaluation Metrics</h2>
+          <div class="grid grid-cols-3 gap-4 mb-4">
+            ${[["Precision", metrics.precision, "text-emerald-400"], ["Recall", metrics.recall, "text-indigo-400"], ["F1", metrics.f1, "text-amber-400"]].map(([label, val, color]) => `
+              <div class="bg-gray-800 rounded-xl p-4 text-center">
+                <div class="text-3xl font-black ${color}">${Math.round(val * 100)}<span class="text-lg">%</span></div>
+                <div class="text-xs text-gray-400 mt-1">${label}</div>
+              </div>
+            `).join("")}
+          </div>
+          <div class="flex gap-4 text-sm text-gray-400">
+            <span class="bg-emerald-900/40 text-emerald-300 px-3 py-1 rounded-lg">TP: ${metrics.tp}</span>
+            <span class="bg-yellow-900/40 text-yellow-300 px-3 py-1 rounded-lg">FP: ${metrics.fp}</span>
+            <span class="bg-red-900/40 text-red-300 px-3 py-1 rounded-lg">FN: ${metrics.fn}</span>
+          </div>
+        `;
+        container.appendChild(card);
+      }
+
+      container.classList.remove("hidden");
+    }
+
+    async function handleAnalyze() {
+      const url = $("url-input").value.trim();
+      if (!url) { showError("Please enter a YouTube URL."); return; }
+
+      hideError();
+      $("results").classList.add("hidden");
+      setLoading(true);
+
+      try {
+        const res = await fetch("/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ youtube_url: url }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || `Server error ${res.status}`);
+        renderResults(data);
+      } catch (e) {
+        showError(e.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    $("analyze-btn").addEventListener("click", handleAnalyze);
+    $("url-input").addEventListener("keydown", e => { if (e.key === "Enter") handleAnalyze(); });
+  </script>
+</body>
+</html>
